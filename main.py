@@ -25,5 +25,12 @@ for j in range(1,solver.L+1):
     else:
         solver.Gammas[j][0,0,0] = 1.0
 
-O = np.array([[3,0],[0,2]])
-print(solver.expectation_value(O))
+S_x = np.array([[0, 1] , [1 , 0]])
+S_y = np.array([[0,-1j], [1j, 0]])
+S_z = np.array([[1, 0] , [0 ,-1]])
+print(S_x)
+print(S_y)
+print(S_z)
+print(solver.expectation_value(S_x))
+print(solver.expectation_value(S_y))
+print(solver.expectation_value(S_z))

@@ -71,8 +71,8 @@ class MPS_solver:
         self.J_xy = J_xy
 
         # empty matrix
-        empt_l = np.zeros(shape=(self.chi,self.chi))
-        empt_G = np.zeros(shape=(2,self.chi,self.chi))
+        empt_l = np.zeros(shape=(self.chi,self.chi), dtype=complex)
+        empt_G = np.zeros(shape=(2,self.chi,self.chi), dtype=complex)
             # first index:  0 = spin down
             #               1 = spin up
 
@@ -101,13 +101,13 @@ class MPS_solver:
         """
 
         # initialize result
-        O_exp = np.zeros(shape=(self.L,))
+        O_exp = np.zeros(shape=(self.L,), dtype=complex)
 
         # go over all sites
         for j in range(1, self.L+1):
             
             # get local state matrix
-            M = np.zeros(shape=(2,self.chi,self.chi))
+            M = np.zeros(shape=(2,self.chi,self.chi), dtype=complex)
 
             # fill with values
             for spin in range(2):

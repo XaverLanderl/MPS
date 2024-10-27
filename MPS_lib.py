@@ -85,14 +85,14 @@ class MPS_solver:
             self.lambdas.append(np.zeros_like(empt_l))
             self.Gammas.append(np.zeros_like(empt_G))
 
-    def expectation_value(self, O):
+    def single_site_expectation_value(self, O):
         """
         Returns the expectation values of single-site operators.
 
         Parameters
         ----------
         self    :   self
-        O       :   operator that acts on a single site
+        O       :   single-site operator
                 :   numpy.ndarray, shape=(2,2)
 
         Returns
@@ -120,3 +120,58 @@ class MPS_solver:
             
         # return result
         return O_exp
+    
+    def apply_two_site_operator(self, O, j):
+        """
+        Applies a two-site operator O_{j,j+1} to the state.
+
+        Parameters
+        ----------
+        self    :   self
+        O       :   two-site operator
+                :   numpy.ndarray, shape=(2,2,2,2)
+        j       :   operator acts on sites j & j+1
+
+        Returns
+        -------
+        Updated lambdas (j-1, j & j+1) and Gammas (j & j+1)
+        """
+
+        # get relevant matrices
+        l1 = self.lambdas[j-1]
+        l2 = self.lambdas[j]
+        l3 = self.lambdas[j+1]
+        G1 = self.Gammas[j]
+        G2 = self.Gammas[j+1]
+
+        # initialize theta
+        Theta = np.zeros(shape=(2,2,self.chi, self.chi), dtype=complex)
+
+        # fill theta
+        for s1 in range(2):
+            for s2 in range(2):
+                Theta[s1,s2,:,:] = l1 @ G1[s1,:,:] @ l2 @ G2[s2,:,:] @ l3
+
+        # apply operator
+        Theta_new = np.zeros(shape=(2,2,self.chi, self.chi), dtype=complex)
+
+        # perform spin sums
+        for sp1 in range(2):
+            for sp2 in range(2):
+                for s1 in range(2):
+                    for s2 in range(2):
+                        Theta_new[sp1,sp2,:,:] += O[sp1,sp2,s1,s2] * Theta[s1,s2,:,:]
+        
+        # write as 2x2 matrix
+        Theta_temp = np.zeros(shape=(2*self.chi,2*self.chi), dtype=complex)
+
+        # assign blocks
+        Theta_temp[:self.chi , :self.chi]  = Theta_new[0,0,:,:] 
+        Theta_temp[:self.chi , self.chi:] = Theta_new[0,1,:,:]
+        Theta_temp[self.chi: , :self.chi]  = Theta_new[1,0,:,:]
+        Theta_temp[self.chi: , self.chi:] = Theta_new[1,1,:,:]
+
+        # perform SVD
+        U_new, S_new, Vh_new = SVD(Theta_temp)
+
+        return U_new, S_new, Vh_new

@@ -8,9 +8,10 @@ chi = 30
 tau = 0.1
 J_z = 1.0
 J_xy = 1.0
+trunc_tol = 1e-10
 
 # initialize solver
-solver = MPS_solver(L=L, chi=chi, tau=tau, J_z=J_z, J_xy=J_xy)
+solver = MPS_solver(L=L, chi=chi, tau=tau, J_z=J_z, J_xy=J_xy, trunc_tol=trunc_tol)
 
 # initialize state
 spins_up = [25,26]
@@ -36,3 +37,5 @@ S_z_exp = solver.single_site_expectation_value(S_z).real
 O = time_evolution_matrix_elements(tau=tau, J_z=J_z, J_xy=J_xy)
 
 U,S,Vh = solver.apply_two_site_operator(O, 10)
+
+

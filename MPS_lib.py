@@ -50,17 +50,18 @@ class MPS_solver:
     Class that does an TEBD calculation on a given MPS
     """
 
-    def __init__(self, L, chi, tau, J_z, J_xy):
+    def __init__(self, L, chi, tau, J_z, J_xy, trunc_tol):
         """
         Class initializer.
 
         Parameters
         ----------
-        L       :   length of the spin chain
-        chi     :   matrix size
-        tau     :   time step
-        J_z     :   longitudinal coupling
-        J_xy    :   transverse coupling
+        L           :   length of the spin chain
+        chi         :   matrix size
+        tau         :   time step
+        J_z         :   longitudinal coupling
+        J_xy        :   transverse coupling
+        trunc_tol   :   threshold below which singular values are set to zero
         """
 
         # set parameters
@@ -116,7 +117,7 @@ class MPS_solver:
             # calculate expectation value
             for spin1 in range(2):
                 for spin2 in range(2):
-                    O_exp[j-1] += O[spin1,spin2] * np.trace(M[spin1,:,:].conjugate()*M[spin2,:,:])
+                    O_exp[j-1] += O[spin1,spin2] * np.trace((M[spin1,:,:].conj().T)*M[spin2,:,:])
             
         # return result
         return O_exp

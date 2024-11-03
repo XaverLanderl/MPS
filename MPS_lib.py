@@ -29,7 +29,7 @@ def time_evolution_matrix_elements(tau, J_z, J_xy):
     result[0,0,0,0] = exp_min
     result[1,1,1,1] = exp_min
 
-    # opposite diagonal tersm
+    # opposite diagonal terms
     result[0,1,0,1] = exp_plus * cos_
     result[1,0,1,0] = exp_plus * cos_
 
@@ -39,11 +39,6 @@ def time_evolution_matrix_elements(tau, J_z, J_xy):
 
     # return result
     return result
-
-# svd
-def SVD(M):
-    U, S, Vh = np.linalg.svd(M, full_matrices=False)
-    return U, np.diag(S), Vh
 
 class MPS_solver:
     """
@@ -86,6 +81,10 @@ class MPS_solver:
             self.lambdas.append(np.zeros_like(empt_l))
             self.Gammas.append(np.zeros_like(empt_G))
 
+        # initialize time evolution operators
+        self.H_even = time_evolution_matrix_elements(tau=self.tau/2,J_z=self.J_z,J_xy=self.J_xy)
+        self.H_odd = time_evolution_matrix_elements(tau=self.tau,J_z=self.J_z,J_xy=self.J_xy)
+        
     def single_site_expectation_value(self, O):
         """
         Returns the expectation values of single-site operators.
@@ -112,19 +111,20 @@ class MPS_solver:
 
             # fill with values
             for spin in range(2):
-                M[spin,:,:] = self.lambdas[j-1] * self.Gammas[j][spin,:,:] * self.lambdas[j]
+                M[spin,:,:] = self.lambdas[j-1] @ self.Gammas[j][spin,:,:] @ self.lambdas[j]
 
             # calculate expectation value
             for spin1 in range(2):
                 for spin2 in range(2):
-                    O_exp[j-1] += O[spin1,spin2] * np.trace((M[spin1,:,:].conj().T)*M[spin2,:,:])
+                    O_exp[j-1] += O[spin1,spin2] * np.trace((M[spin1,:,:].conj().T) @ M[spin2,:,:])
             
         # return result
         return O_exp
     
     def apply_two_site_operator(self, O, j):
         """
-        Applies a two-site operator O_{j,j+1} to the state.
+        Applies a two-site operator of the form O_{j,j+1} to the state.
+        We start counting sites at 1.
 
         Parameters
         ----------
@@ -132,29 +132,36 @@ class MPS_solver:
         O       :   two-site operator
                 :   numpy.ndarray, shape=(2,2,2,2)
         j       :   operator acts on sites j & j+1
+                :   j must be in the interval [1, L-1]
 
         Returns
         -------
-        Updated lambdas (j-1, j & j+1) and Gammas (j & j+1)
+        Updated lambda[j] and Gammas[j] & [j+1])
+        Cannot act on the last site as there is no site L+1.
         """
 
         # get relevant matrices
-        l1 = self.lambdas[j-1]
-        l2 = self.lambdas[j]
-        l3 = self.lambdas[j+1]
-        G1 = self.Gammas[j]
-        G2 = self.Gammas[j+1]
+        l_jm1 = self.lambdas[j-1]
+        l_j = self.lambdas[j]
+        l_jp1 = self.lambdas[j+1]
+        G_j = self.Gammas[j]
+        G_jp1 = self.Gammas[j+1]
+
+        # initialize results
+        l_j_new = l_j.copy()
+        G_j_new = G_j.copy()
+        G_jp1_new = G_jp1.copy()
 
         # initialize theta
-        Theta = np.zeros(shape=(2,2,self.chi, self.chi), dtype=complex)
+        Theta = np.zeros(shape=(2,2,self.chi,self.chi), dtype=complex)
 
         # fill theta
         for s1 in range(2):
             for s2 in range(2):
-                Theta[s1,s2,:,:] = l1 @ G1[s1,:,:] @ l2 @ G2[s2,:,:] @ l3
+                Theta[s1,s2,:,:] = l_jm1 @ G_j[s1,:,:] @ l_j @ G_jp1[s2,:,:] @ l_jp1
 
         # apply operator
-        Theta_new = np.zeros(shape=(2,2,self.chi, self.chi), dtype=complex)
+        Theta_new = np.zeros(shape=(2,2,self.chi,self.chi), dtype=complex)
 
         # perform spin sums
         for sp1 in range(2):
@@ -162,17 +169,72 @@ class MPS_solver:
                 for s1 in range(2):
                     for s2 in range(2):
                         Theta_new[sp1,sp2,:,:] += O[sp1,sp2,s1,s2] * Theta[s1,s2,:,:]
-        
+
         # write as 2x2 matrix
         Theta_temp = np.zeros(shape=(2*self.chi,2*self.chi), dtype=complex)
 
         # assign blocks
-        Theta_temp[:self.chi , :self.chi]  = Theta_new[0,0,:,:] 
-        Theta_temp[:self.chi , self.chi:] = Theta_new[0,1,:,:]
-        Theta_temp[self.chi: , :self.chi]  = Theta_new[1,0,:,:]
-        Theta_temp[self.chi: , self.chi:] = Theta_new[1,1,:,:]
+        Theta_temp[:self.chi,:self.chi]  = Theta_new[0,0,:,:] 
+        Theta_temp[:self.chi,self.chi:] = Theta_new[0,1,:,:]
+        Theta_temp[self.chi:,:self.chi]  = Theta_new[1,0,:,:]
+        Theta_temp[self.chi:,self.chi:] = Theta_new[1,1,:,:]
 
         # perform SVD
-        U_new, S_new, Vh_new = SVD(Theta_temp)
+        U, s, Vh = np.linalg.svd(Theta_temp, full_matrices=True)
 
-        return U_new, S_new, Vh_new
+        # trunctate matrices and renormalize S
+        disc_weight_j = np.sum(s[self.chi:]**2)
+        l_j_new = 1 / np.sqrt(1 - disc_weight_j) * np.diag(s[:self.chi])
+
+        # split off lambdas
+        l_jml_inv = np.linalg.pinv(l_jm1)
+        l_jp1_inv = np.linalg.pinv(l_jp1)
+
+        # and assign new Gammas
+        G_j_new[0,:,:] = l_jml_inv @ U[:self.chi,:self.chi]
+        G_j_new[1,:,:] = l_jml_inv @ U[self.chi:,:self.chi]
+        G_jp1_new[0,:,:] = Vh[:self.chi,:self.chi] @ l_jp1_inv
+        G_jp1_new[1,:,:] = Vh[:self.chi,self.chi:] @ l_jp1_inv
+
+        # return results
+        return G_j_new, l_j_new, G_jp1_new, disc_weight_j
+    
+    def apply_time_evolution(self):
+        """
+        Performs a time-evolution step on the MPS.
+
+        Parameters
+        ----------
+        self        : self
+
+        Returns
+        -------
+        updates lambdas and Gammas.
+        """
+
+        # first, we must apply a half-time step to every even site.
+        for j in range(1, self.L, 2):  # start counting at 1, only even sites
+
+            # get new Gamma[j], lambda[j], Gamma[j+1]
+            G_j_new, l_j_new, G_jp1_new, disc_weight_j = self.apply_two_site_operator(self.H_even, j)
+            self.Gammas[j] = G_j_new
+            self.lambdas[j] = l_j_new
+            self.Gammas[j+1] = G_jp1_new
+        
+        # then, we must apply a full-time step to every odd site.
+        for j in range(2, self.L, 2):  # start counting at 1, only odd sites
+
+            # get new Gamma[j], lambda[j], Gamma[j+1]
+            G_j_new, l_j_new, G_jp1_new, disc_weight_j = self.apply_two_site_operator(self.H_odd, j)
+            self.Gammas[j] = G_j_new
+            self.lambdas[j] = l_j_new
+            self.Gammas[j+1] = G_jp1_new
+
+        # finally, we must apply a half-time step to every even site.
+        for j in range(1, self.L, 2):  # start counting at 1, only even sites
+
+            # get new Gamma[j], lambda[j], Gamma[j+1]
+            G_j_new, l_j_new, G_jp1_new, disc_weight_j = self.apply_two_site_operator(self.H_even, j)
+            self.Gammas[j] = G_j_new
+            self.lambdas[j] = l_j_new
+            self.Gammas[j+1] = G_jp1_new

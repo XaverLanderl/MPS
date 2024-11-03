@@ -65,6 +65,7 @@ class MPS_solver:
         self.tau = tau
         self.J_z = J_z
         self.J_xy = J_xy
+        self.trunc_tol = trunc_tol
 
         # empty matrix
         empt_l = np.zeros(shape=(self.chi,self.chi), dtype=complex)
@@ -184,6 +185,9 @@ class MPS_solver:
 
         # trunctate matrices and renormalize S
         disc_weight_j = np.sum(s[self.chi:]**2)
+        # check discarded weight:
+        if disc_weight_j > self.trunc_tol:
+            raise ValueError("Trunctation tolerance exceeded. Discarded weight = " + str(disc_weight_j))
         l_j_new = 1 / np.sqrt(1 - disc_weight_j) * np.diag(s[:self.chi])
 
         # split off lambdas
@@ -212,6 +216,8 @@ class MPS_solver:
         updates lambdas and Gammas.
         """
 
+        disc_weight_max = 0
+
         # first, we must apply a half-time step to every even site.
         for j in range(1, self.L, 2):  # start counting at 1, only even sites
 
@@ -220,6 +226,9 @@ class MPS_solver:
             self.Gammas[j] = G_j_new
             self.lambdas[j] = l_j_new
             self.Gammas[j+1] = G_jp1_new
+
+            if disc_weight_j > disc_weight_max:
+                disc_weight_max = disc_weight_j
         
         # then, we must apply a full-time step to every odd site.
         for j in range(2, self.L, 2):  # start counting at 1, only odd sites
@@ -230,6 +239,9 @@ class MPS_solver:
             self.lambdas[j] = l_j_new
             self.Gammas[j+1] = G_jp1_new
 
+            if disc_weight_j > disc_weight_max:
+                disc_weight_max = disc_weight_j
+
         # finally, we must apply a half-time step to every even site.
         for j in range(1, self.L, 2):  # start counting at 1, only even sites
 
@@ -238,3 +250,9 @@ class MPS_solver:
             self.Gammas[j] = G_j_new
             self.lambdas[j] = l_j_new
             self.Gammas[j+1] = G_jp1_new
+
+            if disc_weight_j > disc_weight_max:
+                disc_weight_max = disc_weight_j
+
+        # return result to monitor data
+        return disc_weight_max

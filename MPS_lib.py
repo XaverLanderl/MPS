@@ -134,9 +134,10 @@ class MPS_solver:
             else:
                 self.Gammas[j][0,0,0] = 1.0
 
-    def run(self, list_of_spins_down=[], t_max=None):
+    def run(self, t_max=None):
         """
         Runs the entire calculation.
+        The state must have been initialized.
 
         Parameters
         ----------
@@ -144,9 +145,6 @@ class MPS_solver:
         list_of_spins_down  :   list of spins initialized as down
         t_max               :   maximal time reached
         """
-
-        # initialize state
-        self.initialize_state(list_of_spins_down)
 
         # do time evolution
         J, T, RES, disc_weights = self.perform_time_evolution(t_max)

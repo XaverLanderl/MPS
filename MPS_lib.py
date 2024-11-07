@@ -3,7 +3,16 @@
 # imports
 import numpy as np
 from matplotlib import pyplot as plt
-from matplotlib.colors import LinearSegmentedColormap, PowerNorm
+from matplotlib.colors import LinearSegmentedColormap
+
+# Define the colors based on the observed color scale in the image
+list_of_colors = ["white", "lightblue", "blue", "cyan", "yellow", "red"]
+num_cols = len(list_of_colors) - 1
+colors = [(ind/num_cols, col) for ind, col in enumerate(list_of_colors)]
+
+
+# Create the colormap
+custom_cmap = LinearSegmentedColormap.from_list("custom_colormap", colors)
 
 # time evolution operator
 def time_evolution_nonzero_elements(tau, J_z, J_xy):
@@ -31,7 +40,7 @@ def time_evolution_nonzero_elements(tau, J_z, J_xy):
     # return results
     return u_diag, u_off_diag, u_flip
 
-def visualize_result(J, T, RES, cmap='Blues'):
+def visualize_result(J, T, RES, cmap=None):
     """
     Plots the results.
     
@@ -41,15 +50,34 @@ def visualize_result(J, T, RES, cmap='Blues'):
     RES     :   expectation values
     """
 
-    # Create the custom colormap
-    custom_cmap = LinearSegmentedColormap.from_list("blue_white",["white","darkblue"])
     plt.figure()
     if cmap == None:
-        plt.pcolormesh(J, T, RES, cmap=cmap, norm=PowerNorm(3.0))
+        plt.pcolormesh(J, T, RES, cmap=custom_cmap)
     else:
         plt.pcolormesh(J, T, RES, cmap=cmap)
     plt.xlabel('j')
     plt.ylabel('t')
+    plt.title('$\\langle S_{j}^{z} \\rangle $')
+    plt.colorbar()
+
+def visualize_entropy(J, T, ENT, cmap=None):
+    """
+    Plots the entanglement entropy.
+
+    Parameters
+    ----------
+    J, T    :   x- and y-grids
+    ENT     :   entanglement entropies
+    """
+
+    plt.figure()
+    if cmap == None:
+        plt.pcolormesh(J[:,:-1], T[:,:-1], ENT, cmap=custom_cmap)
+    else:
+        plt.pcolormesh(J[:,:-1], T[:,:-1], cmap=cmap)
+    plt.xlabel('j')
+    plt.ylabel('t')
+    plt.title('Entanglement Entropy')
     plt.colorbar()
 
 class MPS_solver:
@@ -90,14 +118,14 @@ class MPS_solver:
         self.u_diag_even, self.u_off_diag_even, self.u_flip_even = time_evolution_nonzero_elements(tau/2, J_z, J_xy)
         self.u_diag_odd, self.u_off_diag_odd, self.u_flip_odd = time_evolution_nonzero_elements(tau, J_z, J_xy)
 
-    def initialize_state(self, list_of_spins_down=[]):
+    def initialize_state(self, list_of_spins_up=[]):
         """
-        Initializes the state as a product state of spins up, except at the entries given in list_of_spins_down.
+        Initializes the state as a product state of spins down, except at the entries given in list_of_spins_up.
 
         Parameters
         ----------
         self                :   self
-        list_of_spins_down  :   list of spins initialized as down
+        list_of_spins_up    :   list of spins initialized as up
                             :   default = [int(L/2 + 1)]
 
         Returns
@@ -106,12 +134,12 @@ class MPS_solver:
         """
 
         # default: single particle in the middle
-        if len(list_of_spins_down) == 0:
-            list_of_spins_down = [int(self.L/2 + 1)]
+        if len(list_of_spins_up) == 0:
+            list_of_spins_up = [int(self.L/2 + 1)]
 
         ### initialize with empty matrices
         # empty matrix
-        empt_l = np.zeros(shape=(self.chi,self.chi), dtype=complex)
+        empt_l = np.zeros(shape=(self.chi,self.chi), dtype=float)   # lambdas are real
         empt_G = np.zeros(shape=(2,self.chi,self.chi), dtype=complex)
 
         # initialize matrixes
@@ -129,10 +157,10 @@ class MPS_solver:
             
         for j in range(1,self.L+1):
             # choose whether to assign up or down
-            if True in (pos == j for pos in list_of_spins_down):
+            if True in (pos == j for pos in list_of_spins_up):
+                self.Gammas[j][0,0,0] = 1.0     # 0: up
+            else:                               # 1: down
                 self.Gammas[j][1,0,0] = 1.0
-            else:
-                self.Gammas[j][0,0,0] = 1.0
 
     def run(self, t_max=None):
         """
@@ -147,10 +175,11 @@ class MPS_solver:
         """
 
         # do time evolution
-        J, T, RES, disc_weights = self.perform_time_evolution(t_max)
+        J, T, RES, ENT, disc_weights = self.perform_time_evolution(t_max)
 
         # plot results
         visualize_result(J, T, RES)
+        visualize_entropy(J, T, ENT)
 
         # plot discarded weights
         if self.show_disc_weights == True:
@@ -160,7 +189,7 @@ class MPS_solver:
             plt.title('Discarded Weights')
 
         # return results
-        return J, T, RES, disc_weights
+        return J, T, RES, ENT, disc_weights
         
     def single_site_expectation_value(self, O):
         """
@@ -439,6 +468,10 @@ class MPS_solver:
         # initialize list of maximimal discarded weights per time step
         disc_weights = []
 
+        # initialize array for entanglement entropy
+        ENT = np.zeros(shape=(num_steps+1,self.L-1))
+        ENT[0,:] = self.calculate_entanglement_entropy()
+
         for step in range(num_steps):
             
             # print out progress every 100 time steps
@@ -452,9 +485,42 @@ class MPS_solver:
             # measure observables
             RES[step+1,:] = self.single_site_expectation_value(self.S_z).real
             time.append(time[-1]+self.tau)
+            ENT[step+1,:] = self.calculate_entanglement_entropy()
 
         # make x- and y-grids
         J,T = np.meshgrid(np.arange(1,self.L+1),np.array(time))
 
         # return results
-        return J, T, RES, disc_weights
+        return J, T, RES, ENT, disc_weights
+    
+    def calculate_entanglement_entropy(self):
+        """
+        Calculates the entanglement entropy at every site.
+
+        Parameters
+        ----------
+        self                    :   self
+
+        Returns
+        -------
+        Entanglement entropy    :    numpy.ndarray, shape=(L-1,)
+        """
+
+        # initialize result
+        entanglement_entropy = np.zeros(shape=(self.L-1))
+
+        # go over all sites with left and right side
+        for site in range(1,self.L):
+
+            # perform the sum
+            entropy = 0
+            for i in range(self.chi):
+                lambda_i_2 = self.lambdas[site][i,i]**2
+                if lambda_i_2 != 0:
+                    entropy += lambda_i_2 * np.log(lambda_i_2)
+            
+            # don't forget the minus sign
+            entanglement_entropy[site-1] = -entropy
+        
+        # return result
+        return entanglement_entropy

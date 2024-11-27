@@ -29,8 +29,8 @@ def time_evolution_nonzero_elements(tau, J_z, J_xy):
 
     # commonly used expressions
     exp_plus = np.exp(1j*tau*J_z/4)
-    cos_ = np.cos(tau/2 * np.abs(J_xy))
-    sin_ = (-1j) * np.sin(tau/2 * np.abs(J_xy))
+    cos_ = np.cos(tau/2 * J_xy)
+    sin_ = (-1j) * np.sin(tau/2 * J_xy)
 
     # non-zero matrix elements
     u_diag = np.exp(-1j*tau*J_z/4)
@@ -85,7 +85,7 @@ class MPS_solver:
     Class that does an TEBD calculation on a given MPS
     """
 
-    def __init__(self, L, chi, tau, J_z, J_xy, trunc_tol, show_disc_weights=False):
+    def __init__(self, L, chi, tau, J_z, J_xy, trunc_tol, show_S_z=True, show_entropy=True, show_progress=True, show_disc_weights=False):
         """
         Class initializer.
 
@@ -97,6 +97,12 @@ class MPS_solver:
         J_z         :   longitudinal coupling
         J_xy        :   transverse coupling
         trunc_tol   :   threshold below which singular values are set to zero
+        show_S_z    :   plot expectation value of S_z?
+                    :   default = True
+        show_entropy:   plot entanglement entropy?
+                    :   default = True
+        show_progress   print out progress?
+                    :   default = True
         show_disc_weights   :   plot discarded weights?
                     :   default = False
         """
@@ -108,6 +114,9 @@ class MPS_solver:
         self.J_z = J_z
         self.J_xy = J_xy
         self.trunc_tol = trunc_tol
+        self.show_S_z = show_S_z
+        self.show_entropy = show_entropy
+        self.show_progress = show_progress
         self.show_disc_weights = show_disc_weights
 
         # S_z-operator
@@ -118,7 +127,7 @@ class MPS_solver:
         self.u_diag_even, self.u_off_diag_even, self.u_flip_even = time_evolution_nonzero_elements(tau/2, J_z, J_xy)
         self.u_diag_odd, self.u_off_diag_odd, self.u_flip_odd = time_evolution_nonzero_elements(tau, J_z, J_xy)
 
-    def initialize_state(self, list_of_spins_up=[]):
+    def initialize_product_state(self, list_of_spins_up=[]):
         """
         Initializes the state as a product state of spins down, except at the entries given in list_of_spins_up.
 
@@ -126,16 +135,17 @@ class MPS_solver:
         ----------
         self                :   self
         list_of_spins_up    :   list of spins initialized as up
-                            :   default = [int(L/2 + 1)]
+                            :   default: all spins down
 
         Returns
         -------
         Initializes self.lambdas and self.Gammas   
         """
 
-        # default: single particle in the middle
-        if len(list_of_spins_up) == 0:
-            list_of_spins_up = [int(self.L/2 + 1)]
+        # Check input
+        for site in list_of_spins_up:
+            if site > self.L:
+                raise IndexError("Site index is out of bounds!")
 
         ### initialize with empty matrices
         # empty matrix
@@ -162,6 +172,133 @@ class MPS_solver:
             else:                               # 1: down
                 self.Gammas[j][1,0,0] = 1.0
 
+    def initialize_entangled_1spin_state(self, site=None, eta=1.0+0.0j):
+        """
+        Initializes the state as an entangled state.
+        |psi> = 1/sqrt(2)*(c_(j-1)^+ + eta*c_j^+)
+
+        Parameters
+        ----------
+        self                :   self
+        site                :   site at which to place the entangled spin
+                            :   default: middle of chain
+        eta                 :   relative phase
+                            :   default: 1
+
+        Returns
+        -------
+        Initializes self.lambdas and self.Gammas   
+        """
+
+        # default: middle of chain
+        if site == None:
+            site = int(self.L/2 + 1)
+        
+        # check input
+        if site > self.L:
+            raise IndexError("Site index is out of bounds!")
+        if np.abs(eta) != 1.0:
+            raise ValueError("Phase must have magnitude 1!")
+
+        ### initialize with empty matrices
+        # empty matrix
+        empt_l = np.zeros(shape=(self.chi,self.chi), dtype=float)   # lambdas are real
+        empt_G = np.zeros(shape=(2,self.chi,self.chi), dtype=complex)
+
+        # initialize matrixes
+        self.lambdas = [np.zeros_like(empt_l)]
+        self.Gammas = [None]    # there is no Gamma^0
+
+        # fill list
+        for j in range(1, self.L+1):
+            self.lambdas.append(np.zeros_like(empt_l))
+            self.Gammas.append(np.zeros_like(empt_G))
+
+        ### initialize state
+        for j in range(self.L+1):
+            if j != (site - 1):
+                self.lambdas[j][0,0] = 1.0
+            elif j == (site - 1):
+                self.lambdas[j][0,0] = 1/np.sqrt(2)
+                self.lambdas[j][1,1] = 1/np.sqrt(2)
+            
+        for j in range(1,self.L+1):
+            # choose whether to assign up or down
+            if (j != (site - 1)) and (j != site):
+                # assign spin down, index 1 = down
+                self.Gammas[j][1,0,0] = 1.0
+            elif j == (site - 1):
+                self.Gammas[j][0,0,0] = 1.0
+                self.Gammas[j][1,0,1] = 1.0
+            elif j == site:
+                self.Gammas[j][0,1,0] = eta
+                self.Gammas[j][1,0,0] = 1.0
+
+    def initialize_entangled_2spin_state(self, site=None, eta=1.0+0.0j):
+        """
+        Initializes the state as an entangled state.
+        |psi> = 1/sqrt(2)*(c_(j-1)^+ + eta*c_j^+)
+
+        Parameters
+        ----------
+        self                :   self
+        site                :   site at which to place the entangled spin
+                            :   default: middle of chain
+        eta                 :   relative phase
+                            :   default: 1
+
+        Returns
+        -------
+        Initializes self.lambdas and self.Gammas   
+        """
+
+        # default: middle of chain
+        if site == None:
+            site = int(self.L/2 + 1)
+        
+        # check input
+        if site > self.L:
+            raise IndexError("Site index is out of bounds!")
+        if np.abs(eta) != 1.0:
+            raise ValueError("Phase must have magnitude 1!")
+
+        ### initialize with empty matrices
+        # empty matrix
+        empt_l = np.zeros(shape=(self.chi,self.chi), dtype=float)   # lambdas are real
+        empt_G = np.zeros(shape=(2,self.chi,self.chi), dtype=complex)
+
+        # initialize matrixes
+        self.lambdas = [np.zeros_like(empt_l)]
+        self.Gammas = [None]    # there is no Gamma^0
+
+        # fill list
+        for j in range(1, self.L+1):
+            self.lambdas.append(np.zeros_like(empt_l))
+            self.Gammas.append(np.zeros_like(empt_G))
+
+        ### initialize state
+        for j in range(self.L+1):
+            if (j != (site - 1)) and (j != site):
+                self.lambdas[j][0,0] = 1.0
+            elif (j == (site - 1)) or (j == site):
+                self.lambdas[j][0,0] = 1/np.sqrt(2)
+                self.lambdas[j][1,1] = 1/np.sqrt(2)
+            
+        for j in range(1,self.L+1):
+            # choose whether to assign up or down
+            if (j != (site - 1)) and (j != site) and (j != site + 1):
+                # assign spin down, index 1 = down
+                self.Gammas[j][1,0,0] = 1.0
+            elif j == (site - 1):
+                self.Gammas[j][0,0,0] = 1.0
+                self.Gammas[j][1,0,1] = 1.0
+            elif j == site:
+                self.Gammas[j][0,0,0] = np.sqrt(2)
+                self.Gammas[j][0,1,1] = np.sqrt(2)
+            elif j == (site + 1):
+                self.Gammas[j][0,1,0] = eta
+                self.Gammas[j][1,0,0] = 1.0
+
     def run(self, t_max=None):
         """
         Runs the entire calculation.
@@ -178,11 +315,13 @@ class MPS_solver:
         J, T, RES, ENT, disc_weights = self.perform_time_evolution(t_max)
 
         # plot results
-        visualize_result(J, T, RES)
-        visualize_entropy(J, T, ENT)
+        if self.show_S_z:
+            visualize_result(J, T, RES)
+        if self.show_entropy:
+            visualize_entropy(J, T, ENT)
 
         # plot discarded weights
-        if self.show_disc_weights == True:
+        if self.show_disc_weights:
             plt.figure()
             plt.plot(disc_weights)
             plt.xlabel('time step')
@@ -475,7 +614,7 @@ class MPS_solver:
         for step in range(num_steps):
             
             # print out progress every 100 time steps
-            if step % 100 == 0:
+            if (step % 100 == 0) and self.show_progress :
                 print('step = ' + str(step) + '/' + str(num_steps))
             
             # perform time-evolution step

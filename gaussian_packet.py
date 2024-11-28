@@ -377,18 +377,22 @@ def get_Gammas(C_up_matrices, C_down_matrices, lambdas, chi, coeffs, test=False)
     # initialize Gamma-list, None as first entry
     Gammas = [None]
 
+    # prepare! make indexing consistent with lambdas
+    C_up_matrices.insert(0, None)
+    C_down_matrices.insert(0, None)
+
     for k in range(1,L+1):
 
         # define spin-resolved Gamma-matrix
         Gamma_k = np.zeros(shape=(2,L,L), dtype=complex)
 
         # get pseudo-inverse of lambda(k-1)
-        l_pinv = np.linalg.pinv(lambdas[k-1])
+        l_pinv = np.linalg.pinv(lambdas[k])
 
         # get Gamma-matrices with pseudo-inverse
-        Gamma_k[0] = l_pinv @ C_up_matrices[k-1]
-        Gamma_k[1] = l_pinv @ C_down_matrices[k-1]
-        # Note: need lambda[k-1]^-1 * C[k], but due to indexing
+        Gamma_k[0] = C_up_matrices[k] @ l_pinv
+        Gamma_k[1] = C_down_matrices[k] @ l_pinv
+        # Note: need  C[k] * lambda[k]^-1, but due to indexing
         # lambda[k] = lambdas[k]
         # C_matrices[k] = C_matrices[k-1]
         # this leads to consistent indexing of Gammas and lambdas!
@@ -434,9 +438,9 @@ def get_Gammas(C_up_matrices, C_down_matrices, lambdas, chi, coeffs, test=False)
 
             for k in range(1,L+1):
                 if k != spin_at + 1:
-                    X = X @ Gammas[k][1]
+                    X = X @ Gammas[k][1]    # spin down
                 else:
-                    X = X @ Gammas[k][0]
+                    X = X @ Gammas[k][0]    # spin up
                 X = X @ lambdas[k]
             
             coeffs_reconstr_norm[spin_at] = X[0,0]
@@ -447,7 +451,7 @@ def get_Gammas(C_up_matrices, C_down_matrices, lambdas, chi, coeffs, test=False)
         if norm_diff_norm <= 1e-10:
             print('Normalized coefficients correctly reproduced! norm_diff = ' + str(norm_diff_norm))
         else:
-            print(np.linalg.norm(coeffs_reconstr_norm + 1/norm_coeffs*coeffs))
+            print(np.linalg.norm(coeffs_reconstr_norm - 1/norm_coeffs*coeffs))
             raise ValueError('Normalized coefficients NOT correctly reconstructed! norm_diff = ' + str(norm_diff_norm))
 
         time3 = time.time()
@@ -493,7 +497,7 @@ def get_canonical_MPS(L, j_0, sigma, k_0, chi, test=False):
 
     # extract Gammas
     print('##### ----- Gamma-matrices ----- #####')
-    canon = get_Gammas(C_up_matrices, C_down_matrices, lambdas, chi, coeffs, test=True)
+    lambdas, Gammas = get_Gammas(C_up_matrices, C_down_matrices, lambdas, chi, coeffs, test=True)
 
     # return results
-    return canon
+    return lambdas, Gammas, coeffs

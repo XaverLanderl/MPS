@@ -4,6 +4,7 @@
 import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
+from gaussian_packet import *
 
 # Define the colors based on the observed color scale in the image
 list_of_colors = ["white", "lightblue", "blue", "cyan", "yellow", "red"]

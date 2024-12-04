@@ -1,5 +1,7 @@
 ### imports
 import numpy as np
+from scipy.linalg import block_diag, expm
+import itertools
 from matplotlib import pyplot as plt
 import time
 
@@ -93,6 +95,28 @@ def swap_adjacent_spins(spin_config, ind):
     # return result
     return result
 
+# Thanks, ChatGPT!
+def numbers_with_k_ones(L, k):
+    # Generate all positions for 1s in an L-bit binary string
+    positions = range(L)
+
+    # Get all combinations of positions to place k ones
+    combinations = itertools.combinations(positions, k)
+    
+    # Create numbers from the combinations
+    result = []
+    for comb in combinations:
+        # Create a binary number with 1s in the chosen positions
+        num = 0
+        for pos in comb:
+            num |= (1 << (L - 1 - pos))  # Set the bit at the chosen position
+
+        # append number to list
+        result.append(bin(num)[2:].zfill(L))
+    
+    # return result
+    return result
+
 def generate_subspaces(L):
     """
     Sorts all numbers between 0 and 2**L - 1 (max L binary digits).
@@ -113,19 +137,17 @@ def generate_subspaces(L):
 
     # L + 1 possible binary sums
     for k in range(L+1):
-        list_of_lists.append([])
-        list_of_dicts.append({})
+        # get all numbers with k bits
+        k_one_numbers = numbers_with_k_ones(L, k)
+        list_of_lists.append(k_one_numbers)
 
-    # go over all numbers and add
-    for num in range(2**L):
-        list_of_lists[bin_sum(num)].append(bin(num)[2:].zfill(L))
+        # initialize dict to store indices
+        list_of_dicts.append({})
 
     # write to dictionaries
     for num_spins_up, subspace in enumerate(list_of_lists):
-        state_index = 0
-        for configuration in subspace:
+        for state_index, configuration in enumerate(subspace):
             list_of_dicts[num_spins_up].update({configuration : state_index})
-            state_index += 1
 
     # return result
     return list_of_lists, list_of_dicts
@@ -196,9 +218,66 @@ def get_block_hamiltonians(L, J_z, J_xy, do_timing=True):
     # return results
     return list_of_hamiltonians
 
+def get_ith_block(L, k, J_z, J_xy, do_timing=True):
+    """
+    Calculates the ith block of the Hamiltonian.
+
+    Parameters
+    ----------
+    int L           : length of the spin chain
+    int k           : block to be calculated (0 to L) == number of spins up
+    double J_z      : longitudinal coupling
+    double J_xy     : transverse coupling
+    bool do_timing  : time the procedure?
+
+    Returns
+    -------
+    np.array        : ith block of the Hamiltonian
+    """
+
+    if do_timing == True:
+        time1 = time.time()
+
+    # generate subspace and basis of subspace
+    subspace = numbers_with_k_ones(L, k)
+    basis = {}
+    for state_index, configuration in enumerate(subspace):
+        basis.update({configuration : state_index})
+
+    # initialize this subspaces's block-hamiltonian
+    block_hamiltonian = np.diag(np.zeros(len(subspace)))
+
+    # go over all configurations in the subspace
+    for basis_state, configuration in enumerate(subspace):
+
+        # create a numpy-array containing the actual spin values of the configuration
+        spin_config = np.array([int(x) - 1/2 for x in configuration])
+        
+        # add diagonal part from longitudinal interaction 
+        block_hamiltonian[basis_state, basis_state] += J_z*np.sum(spin_config*np.roll(spin_config,shift=1))
+
+        # go over the current configuration to get non-diagonal contributions
+        for site in range(L):
+            
+            # check if adjacent spins have opposite spin
+            if configuration[site] != configuration[(site+1)%L]:
+
+                # get basis state index of contributing state
+                ind_cont = basis[swap_adjacent_spins(configuration, site)]
+                
+                # add contribution to the corresponding basis element
+                block_hamiltonian[basis_state, ind_cont] += J_xy/2
+
+    if do_timing == True:
+        time2 = time.time()
+        print('Generating the Hamiltonian took ' + str(round(time2-time1,4)) + 's.')
+
+    # return results
+    return block_hamiltonian
+
 def calculate_partition_sums(list_of_hamiltonians, L, beta, h, do_timing=True):
     """
-    Calculates the partition sums of the blocks and adds the magnetic field.
+    Calculates the partition sums of the blocks, as wenn as <M> and <M**2>.
 
     Parameters
     ----------
@@ -210,6 +289,9 @@ def calculate_partition_sums(list_of_hamiltonians, L, beta, h, do_timing=True):
 
     Returns
     list_of_Z               : list of partition functions (length L+1)
+    E_average               : average energy
+    M_average               : average magnetization
+    M2_average              : average magnetization squared
     """
 
     if do_timing == True:
@@ -237,16 +319,13 @@ def calculate_partition_sums(list_of_hamiltonians, L, beta, h, do_timing=True):
         # get Z0
         Z0 = np.sum(np.exp(-beta*eigvals))
 
-        E0_1 = np.sum((eigvals - h*mag)*np.exp(-beta*eigvals))
-        E0_2 = np.sum((eigvals + h*mag)*np.exp(-beta*eigvals))
-
         # get Z with h
         list_of_Z_1.append(np.exp(beta*h*mag)*Z0)
         list_of_Z_2.append(np.exp(-beta*h*mag)*Z0)
 
         # get trace of He^-betaH in block
-        list_of_E_1.append(np.exp(beta*h*mag)*E0_1)
-        list_of_E_2.append(np.exp(-beta*h*mag)*E0_2)
+        list_of_E_1.append(np.sum((eigvals-h*mag)*np.exp(beta*h*mag)*np.exp(-beta*eigvals)))
+        list_of_E_2.append(np.sum((eigvals+h*mag)*np.exp(-beta*h*mag)*np.exp(-beta*eigvals)))
 
     # add equivalent contributions
     if L%2 == 1:    # case L odd
@@ -260,13 +339,16 @@ def calculate_partition_sums(list_of_hamiltonians, L, beta, h, do_timing=True):
     if not len(list_of_Z) == L+1:
         raise IndexError('There must be L+1 blocks!')
     
-    # get total Z and average M
+    # get total Z and average M and average M^2
     Z = 0
     M_average = 0
+    M2_average = 0
     for num_spins_up, Z_block in enumerate(list_of_Z):
         Z += Z_block
         M_average += (-L/2+num_spins_up)*Z_block
+        M2_average += (-L/2+num_spins_up)**2*Z_block
     M_average *= 1/Z
+    M2_average *= 1/Z
 
     # get average E
     E_average = 0
@@ -279,34 +361,61 @@ def calculate_partition_sums(list_of_hamiltonians, L, beta, h, do_timing=True):
         print('Calculating Z took ' + str(round(time2-time1,4)) + 's.')
 
     # return results
-    return list_of_Z, E_average, M_average
+    return list_of_Z, E_average, M_average, M2_average
 
-# parameters
-L = 2           # length of spin chain
-beta = 1        # inverse temperature
-J_z = 2         # longitudinal coupling
-J_xy = 2*J_z    # transverse coupling (default = isotropic Heisenberg model)
-h = J_z/2       # magnetic field
+def expectation_value(state):
+    """
+    Calculates the expectation value of S_z at ever site for a one-spin-up-state.
 
-list_of_hamiltonians = get_block_hamiltonians(L, J_z, J_xy, False)
-list_of_Z, E_average, M_average = calculate_partition_sums(list_of_hamiltonians, L, beta, h, False)
-print(E_average)
+    Parameters
+    ----------
+    state   : vector
 
-# free case
-if False:
-    h_list = np.linspace(-7,7,50)
-    m_list = np.zeros(shape=h_list.shape)
+    Returns
+    -------
+    expect  : vector
+    """
 
-    list_of_hamiltonians = get_block_hamiltonians(L, 0, 0, False)
+    # get size of lattice
+    L = state.size
 
-    for ind, h in enumerate(h_list):
-        list_of_Z, E_average, M_average = calculate_partition_sums(list_of_hamiltonians, L, beta, h, False)
-        m_list[ind] = M_average/L
+    # initialize result
+    expect = np.zeros(shape=(L))
 
-    plt.plot(h_list, m_list, label='simulation')
-    plt.plot(h_list, 1/2*np.tanh(h_list/2/beta),'--', label='exact')
-    plt.xlabel('h');
-    plt.ylabel('m');
+    # normalize state
+    state *= 1/np.linalg.norm(state)
 
-    plt.legend();
-    plt.title('No coupling = free paramagnet');
+    # go over all sites
+    for site in range(L):
+
+        # get expectation value
+        expect[site] = 2*np.abs(state[site,0])**2 - 1
+    
+    # return result
+    return expect
+
+def gaussian_coeff(L, j_0, sigma, k_0):
+    """
+    Calculates the expansion coefficients of a Gaussian Wave Packet.
+
+    Parameters
+    ----------
+    L           : length of the spin chain
+    j_0         : centre of the wave packet
+    sigma       : standard deviation of the wave packet
+    k_0         : momentum of the wave packet
+
+    Returns
+    -------
+    coeffs      : np.array containing the state expansion coefficients
+    """
+
+    # set up coefficients of state expansion as a vector
+    coeffs = np.zeros(shape=(L,1), dtype=complex)
+
+    # write values to vector
+    for j in range(L):
+        coeffs[j,0] = np.exp(-(j - j_0)**2/(2*sigma**2)) * np.exp(1j*k_0*(j - j_0))
+
+    # normalize and return
+    return coeffs / np.linalg.norm(coeffs)

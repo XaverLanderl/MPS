@@ -4,7 +4,7 @@ from MPS_lib import *
 # parameters
 params = {
     'L'                 : 50,
-    'chi'               : 10,
+    'chi'               : 4,
     'tau'               : 0.1,
     'J_z'               : 15.0,
     'J_xy'              : 1.0,
@@ -19,7 +19,7 @@ params = {
 solver = MPS_solver(**params)
 
 # make a wall
-WALL = [21,22,23,24,25,26,27,28,29,30,49]
+WALL = [1]
 solver.initialize_product_state(WALL)
 
 # run solver

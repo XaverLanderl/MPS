@@ -95,8 +95,9 @@ class MPS_solver:
         L           :   length of the spin chain
         chi         :   matrix size
         tau         :   time step
-        J_z         :   longitudinal coupling
-        J_xy        :   transverse coupling
+        J_z         :   longitudinal coupling (or list thereof)
+        J_xy        :   transverse coupling (or list thereof)
+                    :   if lists are passed, the i-th element in the list corresponds to the coupling between sites i and i+1
         trunc_tol   :   threshold below which singular values are set to zero
         show_S_z    :   plot expectation value of S_z?
                     :   default = True
@@ -109,24 +110,87 @@ class MPS_solver:
         """
 
         # set parameters
-        self.L = L
-        self.chi = chi
-        self.tau = tau
-        self.J_z = J_z
-        self.J_xy = J_xy
-        self.trunc_tol = trunc_tol
-        self.show_S_z = show_S_z
-        self.show_entropy = show_entropy
-        self.show_progress = show_progress
-        self.show_disc_weights = show_disc_weights
+        self.L                  = L
+        self.chi                = chi
+        self.tau                = tau
+        self.trunc_tol          = trunc_tol
+        self.show_S_z           = show_S_z
+        self.show_entropy       = show_entropy
+        self.show_progress      = show_progress
+        self.show_disc_weights  = show_disc_weights
 
         # S_z-operator
         self.S_z = np.array([[1 , 0],
                              [0 ,-1]])
+        
+        # check whether J-s are scalar or vectors
+        if isinstance(J_z, np.ndarray):
+            if J_z.size == self.L - 1:
+                self.J_z = J_z
+            else:
+                raise IndexError('J_z must be of length L-1!')
+        elif isinstance(J_z, list):
+            if len(J_z) == self.L - 1:
+                self.J_z = J_z
+            else:
+                raise IndexError('J_z must be of length L-1!')
+        elif isinstance(J_z, float):
+            self.J_z = J_z*np.ones(shape=(L-1))
+        else:
+            raise TypeError('J_z must be either a scalar or an array/list!')
+        
+        if isinstance(J_xy, np.ndarray):
+            if J_xy.size == self.L - 1:
+                self.J_xy = J_xy
+            else:
+                raise IndexError('J_xy must be of length L-1!')
+        elif isinstance(J_xy, list):
+            if len(J_xy) == self.L - 1:
+                self.J_xy = J_xy
+            else:
+                raise IndexError('J_xy must be of length L-1!')
+        elif isinstance(J_xy, float):
+            self.J_xy = J_xy*np.ones(shape=(L-1))
+        else:
+            raise TypeError('J_xy must be either a scalar or an array/list!')
 
         # initialize time evolution operators
-        self.u_diag_even, self.u_off_diag_even, self.u_flip_even = time_evolution_nonzero_elements(tau/2, J_z, J_xy)
-        self.u_diag_odd, self.u_off_diag_odd, self.u_flip_odd = time_evolution_nonzero_elements(tau, J_z, J_xy)
+        self.u_diag_even        = [None] # for consistent indexing, like with lambdas/Gammas
+        self.u_off_diag_even    = [None]
+        self.u_flip_even        = [None]
+        self.u_diag_odd         = [None]
+        self.u_off_diag_odd     = [None]
+        self.u_flip_odd         = [None]
+
+        # go over all sites and evaluate U at this site
+        for site in range(self.L-1):
+
+            # even time evolution
+            time_evol_even = time_evolution_nonzero_elements(tau/2, self.J_z[site], self.J_xy[site])
+            self.u_diag_even.append(    time_evol_even[0])
+            self.u_off_diag_even.append(time_evol_even[1])
+            self.u_flip_even.append(    time_evol_even[2])
+
+            # odd time evolution
+            time_evol_odd = time_evolution_nonzero_elements(tau, self.J_z[site], self.J_xy[site])
+            self.u_diag_odd.append(     time_evol_odd[0])
+            self.u_off_diag_odd.append( time_evol_odd[1])
+            self.u_flip_odd.append(     time_evol_odd[2])
+        # Note: u_*[i] is the time-evol. operator between site i and i+1.
+        
+        # check results
+        if not len(self.u_diag_even) == self.L:
+            raise IndexError('There must be L-1 time evolution operators!')
+        if not len(self.u_off_diag_even) == self.L:
+            raise IndexError('There must be L-1 time evolution operators!')
+        if not len(self.u_flip_even) == self.L:
+            raise IndexError('There must be L-1 time evolution operators!')
+        if not len(self.u_diag_odd) == self.L:
+            raise IndexError('There must be L-1 time evolution operators!')
+        if not len(self.u_off_diag_odd) == self.L:
+            raise IndexError('There must be L-1 time evolution operators!')
+        if not len(self.u_flip_odd) == self.L:
+            raise IndexError('There must be L-1 time evolution operators!')
 
     def initialize_product_state(self, list_of_spins_up=[]):
         """
@@ -145,7 +209,7 @@ class MPS_solver:
 
         # Check input
         for site in list_of_spins_up:
-            if site > self.L:
+            if site > self.L or site <= 0:
                 raise IndexError("Site index is out of bounds!")
 
         ### initialize with empty matrices
@@ -329,7 +393,7 @@ class MPS_solver:
             plt.title('Discarded Weights')
 
         # return results
-        return J, T, RES, ENT, disc_weights
+        return J, T, RES, ENT, np.array(disc_weights)
         
     def single_site_expectation_value(self, O):
         """
@@ -538,7 +602,7 @@ class MPS_solver:
         for j in range(1, self.L, 2):  # start counting at 1, only even sites
 
             # get new Gamma[j], lambda[j], Gamma[j+1]
-            G_j_new, l_j_new, G_jp1_new, disc_weight_j = self.apply_two_site_time_evolution(self.u_diag_even, self.u_off_diag_even, self.u_flip_even, j)
+            G_j_new, l_j_new, G_jp1_new, disc_weight_j = self.apply_two_site_time_evolution(self.u_diag_even[j], self.u_off_diag_even[j], self.u_flip_even[j], j)
             self.Gammas[j] = G_j_new
             self.lambdas[j] = l_j_new
             self.Gammas[j+1] = G_jp1_new
@@ -551,7 +615,7 @@ class MPS_solver:
         for j in range(2, self.L, 2):  # start counting at 1, only odd sites
 
             # get new Gamma[j], lambda[j], Gamma[j+1]
-            G_j_new, l_j_new, G_jp1_new, disc_weight_j =  self.apply_two_site_time_evolution(self.u_diag_odd, self.u_off_diag_odd, self.u_flip_odd, j)
+            G_j_new, l_j_new, G_jp1_new, disc_weight_j =  self.apply_two_site_time_evolution(self.u_diag_odd[j], self.u_off_diag_odd[j], self.u_flip_odd[j], j)
             self.Gammas[j] = G_j_new
             self.lambdas[j] = l_j_new
             self.Gammas[j+1] = G_jp1_new
@@ -564,7 +628,7 @@ class MPS_solver:
         for j in range(1, self.L, 2):  # start counting at 1, only even sites
 
             # get new Gamma[j], lambda[j], Gamma[j+1]
-            G_j_new, l_j_new, G_jp1_new, disc_weight_j =  self.apply_two_site_time_evolution(self.u_diag_even, self.u_off_diag_even, self.u_flip_even, j)
+            G_j_new, l_j_new, G_jp1_new, disc_weight_j =  self.apply_two_site_time_evolution(self.u_diag_even[j], self.u_off_diag_even[j], self.u_flip_even[j], j)
             self.Gammas[j] = G_j_new
             self.lambdas[j] = l_j_new
             self.Gammas[j+1] = G_jp1_new

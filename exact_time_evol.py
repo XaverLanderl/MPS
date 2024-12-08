@@ -2,19 +2,19 @@ from exact_diag import *
 from MPS_lib import visualize_result
 
 # physical parameters
-L = 51
+L = 1001
 J_z = 1
 J_xy = 1
 
 # calculation parameters
-tau = 0.1
+tau = 0.01
 t_max = L
 num_steps = int(t_max/tau) + 1
 
 # initial state
-gaussian = False
+gaussian = True
 j_0 = int(L/2)+1    # centre of spin chain
-sigma = 3
+sigma = 300
 k_0 = -np.pi/2
 
 # define initial state
